@@ -232,8 +232,10 @@ class PHPExcel_ReferenceHelper
         foreach ($aHyperlinkCollection as $key => $value) {
             $newReference = $this->updateCellReference($key, $pBefore, $pNumCols, $pNumRows);
             if ($key != $newReference) {
-                $pSheet->setHyperlink($newReference, $value);
                 $pSheet->setHyperlink($key, null);
+                if ($newReference) {
+                    $pSheet->setHyperlink($newReference, $value);
+                }
             }
         }
     }
@@ -256,8 +258,10 @@ class PHPExcel_ReferenceHelper
         foreach ($aDataValidationCollection as $key => $value) {
             $newReference = $this->updateCellReference($key, $pBefore, $pNumCols, $pNumRows);
             if ($key != $newReference) {
-                $pSheet->setDataValidation($newReference, $value);
                 $pSheet->setDataValidation($key, null);
+                if ($newReference) {
+                    $pSheet->setDataValidation($newReference, $value);
+                }
             }
         }
     }
@@ -278,7 +282,9 @@ class PHPExcel_ReferenceHelper
         $aNewMergeCells = array(); // the new array of all merge cells
         foreach ($aMergeCells as $key => &$value) {
             $newReference = $this->updateCellReference($key, $pBefore, $pNumCols, $pNumRows);
-            $aNewMergeCells[$newReference] = $newReference;
+            if ($newReference) {
+                $aNewMergeCells[$newReference] = $newReference;
+            }
         }
         $pSheet->setMergeCells($aNewMergeCells); // replace the merge cells array
     }
@@ -302,8 +308,10 @@ class PHPExcel_ReferenceHelper
         foreach ($aProtectedCells as $key => $value) {
             $newReference = $this->updateCellReference($key, $pBefore, $pNumCols, $pNumRows);
             if ($key != $newReference) {
-                $pSheet->protectCells($newReference, $value, true);
                 $pSheet->unprotectCells($key);
+                if ($newReference) {
+                    $pSheet->protectCells($newReference, $value, true);
+                }
             }
         }
     }
@@ -428,18 +436,18 @@ class PHPExcel_ReferenceHelper
             $cell = $pSheet->getCell($cellID);
             $cellIndex = PHPExcel_Cell::columnIndexFromString($cell->getColumn());
 
-            // Commenting this out. We need to update formulas, even in Column A.
-            // if ($cellIndex-1 + $pNumCols < 0) {
-            //    continue;
-            // }
-
-            // New coordinates
-            $newCoordinates = PHPExcel_Cell::stringFromColumnIndex($cellIndex-1 + $pNumCols) . ($cell->getRow() + $pNumRows);
+            if ($pNumCols<0 && $cellIndex>=$beforeColumnIndex+$pNumCols &&
+                $cellIndex<$beforeColumnIndex) {
+                continue;
+            }
 
             // Should the cell be updated? Move value and cellXf index from one cell to another.
             if (($cellIndex >= $beforeColumnIndex) && ($cell->getRow() >= $beforeRow)) {
                 // Update cell styles
                 $pSheet->getCell($newCoordinates)->setXfIndex($cell->getXfIndex());
+
+                // New coordinates
+                $newCoordinates = PHPExcel_Cell::stringFromColumnIndex($cellIndex-1 + $pNumCols) . ($cell->getRow() + $pNumRows);
 
                 // Insert this cell at its new location
                 if ($cell->getDataType() == PHPExcel_Cell_DataType::TYPE_FORMULA) {
@@ -704,8 +712,8 @@ class PHPExcel_ReferenceHelper
                     foreach ($matches as $match) {
                         $fromString = ($match[2] > '') ? $match[2].'!' : '';
                         $fromString .= $match[3].':'.$match[4];
-                        $modified3 = $this->updateCellReference($match[3], $pBefore, $pNumCols, $pNumRows);
-                        $modified4 = $this->updateCellReference($match[4], $pBefore, $pNumCols, $pNumRows);
+                        $modified3 = $this->updateCellReference($match[3], $pBefore, $pNumCols, $pNumRows, true);
+                        $modified4 = $this->updateCellReference($match[4], $pBefore, $pNumCols, $pNumRows, false);
 
                         if ($match[3].$match[4] !== $modified3.$modified4) {
                             if (($match[2] == '') || (trim($match[2], "'") == $sheetName)) {
@@ -775,11 +783,11 @@ class PHPExcel_ReferenceHelper
      * @param    int        $pBefore            Insert before this one
      * @param    int        $pNumCols            Number of columns to increment
      * @param    int        $pNumRows            Number of rows to increment
-     * @param    bool or null   $top_left       Whether top/left or bottom/right or moot
+     * @param    bool or null   $topLeft         Whether top/left or bottom/right or moot
      * @return    string    Updated cell range
      * @throws    PHPExcel_Exception
      */
-    public function updateCellReference($pCellRange = 'A1', $pBefore = 'A1', $pNumCols = 0, $pNumRows = 0, $top_left = null)
+    public function updateCellReference($pCellRange = 'A1', $pBefore = 'A1', $pNumCols = 0, $pNumRows = 0, $topLeft = null)
     {
         // Is it in another worksheet? Will not have to update anything.
         if (strpos($pCellRange, "!") !== false) {
@@ -787,7 +795,7 @@ class PHPExcel_ReferenceHelper
         // Is it a range or a single cell?
         } elseif (strpos($pCellRange, ':') === false && strpos($pCellRange, ',') === false) {
             // Single cell
-            return $this->updateSingleCellReference($pCellRange, $pBefore, $pNumCols, $pNumRows, $top_left);
+            return $this->updateSingleCellReference($pCellRange, $pBefore, $pNumCols, $pNumRows, $topLeft);
         } elseif (strpos($pCellRange, ':') !== false || strpos($pCellRange, ',') !== false) {
             // Range
             return $this->updateCellRange($pCellRange, $pBefore, $pNumCols, $pNumRows);
@@ -838,6 +846,7 @@ class PHPExcel_ReferenceHelper
     private function updateCellRange($pCellRange = 'A1:A1', $pBefore = 'A1', $pNumCols = 0, $pNumRows = 0)
     {
         if (strpos($pCellRange, ':') !== false || strpos($pCellRange, ',') !== false) {
+            $needToReindex = false;
             // Update range
             $range = PHPExcel_Cell::splitRange($pCellRange);
             $ic = count($range);
@@ -854,6 +863,22 @@ class PHPExcel_ReferenceHelper
                         $range[$i][$j] = $this->updateSingleCellReference($range[$i][$j], $pBefore, $pNumCols, $pNumRows, $j==0);
                     }
                 }
+                if ($jc == 2) {
+                    $currentRange = $range[$i][0].":".$range[$i][1];
+                    $dimensions = PHPExcel_Cell::rangeDimension($currentRange);
+                    // If the entire range is being removed, one of the dimensions will be 0
+                    if ($dimensions[0] == 0 or $dimensions[1] == 0) {
+                        unset($range[$i]);
+                        $needToReindex = true;
+                    }
+                }
+            }
+            if ($needToReindex) {
+                // If all of the ranges have been removed, an empty string is desirable for many callers
+                if (!$range) {
+                    return '';
+                }
+                $range = array_values($range);
             }
 
             // Recreate range string
@@ -870,11 +895,11 @@ class PHPExcel_ReferenceHelper
      * @param    int        $pBefore            Insert before this one
      * @param    int        $pNumCols            Number of columns to increment
      * @param    int        $pNumRows            Number of rows to increment
-     * @param    bool or null   $top_left       Whether top/left or bottom/right or moot
+     * @param    bool or null   $topLeft         Whether top/left or bottom/right or moot
      * @return    string    Updated cell reference
      * @throws    PHPExcel_Exception
      */
-    private function updateSingleCellReference($pCellReference = 'A1', $pBefore = 'A1', $pNumCols = 0, $pNumRows = 0, $top_left = null)
+    private function updateSingleCellReference($pCellReference = 'A1', $pBefore = 'A1', $pNumCols = 0, $pNumRows = 0, $topLeft = null)
     {
         if (strpos($pCellReference, ':') === false && strpos($pCellReference, ',') === false) {
             // Get coordinates of $pBefore
@@ -886,11 +911,11 @@ class PHPExcel_ReferenceHelper
             // Verify which parts should be updated
             if (($newColumn{0} != '$') && ($beforeColumn{0} != '$')) {
                 // A special case is removing the left/top or bottom/right edge of a range
-                // $top_left is null if we aren't adjusting a range at all.
-                if ($top_left !== null and $pNumCols < 0 &&
+                // $topLeft is null if we aren't adjusting a range at all.
+                if ($topLeft !== null and $pNumCols < 0 &&
                         PHPExcel_Cell::columnIndexFromString($newColumn) >= PHPExcel_Cell::columnIndexFromString($beforeColumn)+$pNumCols &&
                         PHPExcel_Cell::columnIndexFromString($newColumn) <= PHPExcel_Cell::columnIndexFromString($beforeColumn)-1) {
-                    if ($top_left) {
+                    if ($topLeft) {
                         $newColumn = PHPExcel_Cell::stringFromColumnIndex( PHPExcel_Cell::columnIndexFromString($beforeColumn) - 1 + $pNumCols );
                     } else {
                         $newColumn = PHPExcel_Cell::stringFromColumnIndex( PHPExcel_Cell::columnIndexFromString($beforeColumn) - 1 + $pNumCols - 1 );
@@ -903,11 +928,11 @@ class PHPExcel_ReferenceHelper
 
             if (($newRow{0} != '$') && ($beforeRow{0} != '$')) {
                 // A special case is removing the left/top or bottom/right edge of a range
-                // $top_left is null if we aren't adjusting a range at all.
-                if ($top_left !== null and $pNumRows < 0 &&
+                // $topLeft is null if we aren't adjusting a range at all.
+                if ($topLeft !== null and $pNumRows < 0 &&
                         $newRow >= $beforeRow+$pNumRows &&
                         $newRow <= $beforeRow-1) {
-                    if ($top_left) {
+                    if ($topLeft) {
                         $newRow = $beforeRow + $pNumRows;
                     } else {
                         $newRow = $beforeRow + $pNumRows -1;
